@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a78d6">
+<meta name="description" content="Дневник тренировок по подтягиваниям: план на каждый день, прогрессия, графики, работает оффлайн.">
+<title>Дневник подтягиваний</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Подтягивания">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="14" width="52" height="6" rx="3" fill="currentColor"/><path d="M22 20v12a10 10 0 0 0 20 0V20" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/><circle cx="32" cy="44" r="6" fill="currentColor"/><path d="M32 50v8" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+      <span>Дневник подтягиваний</span>
+    </div>
+    <div class="topbar-right">
+      <span id="offline-badge" class="pill pill-muted" hidden>оффлайн</span>
+      <button id="btn-theme" class="icon-btn" type="button" title="Тема" aria-label="Переключить тему">◐</button>
+    </div>
+  </div>
+</header>
+
+<main id="view" class="view"></main>
+
+<nav class="tabbar" aria-label="Разделы">
+  <button class="tab" data-tab="today" type="button"><span class="tab-ico">▶</span>Сегодня</button>
+  <button class="tab" data-tab="diary" type="button"><span class="tab-ico">☰</span>Дневник</button>
+  <button class="tab" data-tab="progress" type="button"><span class="tab-ico">▲</span>Прогресс</button>
+  <button class="tab" data-tab="plan" type="button"><span class="tab-ico">≡</span>План</button>
+  <button class="tab" data-tab="settings" type="button"><span class="tab-ico">⚙</span>Ещё</button>
+</nav>
+
+<div id="timer" class="timer" hidden>
+  <div class="timer-inner">
+    <div class="timer-label">Отдых</div>
+    <div class="timer-time" id="timer-time">2:00</div>
+    <div class="timer-actions">
+      <button type="button" class="btn btn-ghost" id="timer-minus">−15 с</button>
+      <button type="button" class="btn btn-ghost" id="timer-plus">+15 с</button>
+      <button type="button" class="btn" id="timer-stop">Стоп</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
