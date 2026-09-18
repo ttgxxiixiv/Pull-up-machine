@@ -22,8 +22,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp version into app and service worker
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          sed -i "s/__BUILD__/$VERSION/" sw.js app.js
+          echo "Version $VERSION"
       - name: Build single-file version
-        run: node build.mjs
+        run: node build.mjs "${GITHUB_SHA::7}"
       - uses: actions/configure-pages@v5
         with:
           enablement: true

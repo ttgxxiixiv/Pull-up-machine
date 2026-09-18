@@ -2,9 +2,11 @@
 // Такой файл можно скачать на телефон и открыть без сервера.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
+// Версия сборки: аргумент командной строки, переменная BUILD_VERSION или дата.
+const version = process.argv[2] || process.env.BUILD_VERSION || new Date().toISOString().slice(0, 10);
 const html = readFileSync('index.html', 'utf8');
 const css = readFileSync('styles.css', 'utf8');
-const js = readFileSync('app.js', 'utf8').replace(/<\/script/gi, '<\\/script');
+const js = readFileSync('app.js', 'utf8').replace(/<\/script/gi, '<\\/script').replace('__BUILD__', version);
 const icon = 'data:image/svg+xml;base64,' + readFileSync('icon.svg').toString('base64');
 
 let out = html
@@ -16,7 +18,7 @@ let out = html
 
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/pullup-diary.html', out);
-console.log('dist/pullup-diary.html:', (out.length / 1024).toFixed(1), 'KiB');
+console.log('dist/pullup-diary.html:', (out.length / 1024).toFixed(1), 'KiB', 'version', version);
 
 // Вариант для встраивания в страницу, у которой уже есть свой <html>/<head>/<body>:
 // только <title>, <style>, разметка и <script>. Скачивание файлов там заблокировано,

@@ -1,5 +1,8 @@
-/* Service worker: кэширует приложение целиком, чтобы дневник открывался без сети. */
-const CACHE = 'pullup-diary-v1';
+/* Service worker: кэширует приложение целиком, чтобы дневник открывался без сети.
+   VERSION подставляется при публикации (см. build.mjs и workflow), поэтому каждый
+   деплой получает новый кэш, а старый удаляется. */
+const VERSION = '__BUILD__';
+const CACHE = 'pullup-diary-' + VERSION;
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +12,7 @@ const ASSETS = [
   './icon.svg',
   './icon-maskable.svg'
 ];
+const NETWORK_TIMEOUT_MS = 4000;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,23 +28,33 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Сначала кэш, затем сеть; ответ из сети обновляет кэш.
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
+});
+
+// Сначала сеть (с таймаутом), затем кэш. Онлайн всегда свежая версия, оффлайн — из кэша.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
   event.respondWith(
-    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
-      const network = fetch(event.request)
+    new Promise((resolve) => {
+      let settled = false;
+      const useCache = () => caches.match(event.request, { ignoreSearch: true }).then((cached) => {
+        if (cached) return cached;
+        if (event.request.mode === 'navigate') return caches.match('./index.html');
+        return Response.error();
+      });
+      const timer = setTimeout(() => { if (!settled) { settled = true; resolve(useCache()); } }, NETWORK_TIMEOUT_MS);
+      fetch(event.request)
         .then((resp) => {
           if (resp && resp.ok) {
             const copy = resp.clone();
             caches.open(CACHE).then((cache) => cache.put(event.request, copy));
           }
-          return resp;
+          if (!settled) { settled = true; clearTimeout(timer); resolve(resp.ok ? resp : useCache().then((c) => c || resp)); }
         })
-        .catch(() => cached);
-      return cached || network;
+        .catch(() => { if (!settled) { settled = true; clearTimeout(timer); resolve(useCache()); } });
     })
   );
 });

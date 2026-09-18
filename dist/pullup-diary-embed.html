@@ -354,6 +354,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 (function () {
   'use strict';
 
+  const APP_VERSION = '2026-09-18';
   const STORE_KEY = 'pullup-diary-v1';
   const DRAFT_KEY = 'pullup-diary-draft-v1';
 
@@ -1176,11 +1177,13 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     $('#btn-import-text', ex).addEventListener('click', () => importText($('#ta-import', ex).value));
 
     const misc = card(`<h1>Приложение</h1>
-      <dl class="kv"><dt>Тренировок записано</dt><dd>${state.sessions.length}</dd><dt>Дневник ведётся с</dt><dd>${esc(fmtShort(state.createdAt || todayStr()))}</dd><dt>Оффлайн-режим</dt><dd id="sw-status">${'serviceWorker' in navigator ? 'проверяем…' : 'недоступен в этом браузере'}</dd></dl>
+      <dl class="kv"><dt>Тренировок записано</dt><dd>${state.sessions.length}</dd><dt>Дневник ведётся с</dt><dd>${esc(fmtShort(state.createdAt || todayStr()))}</dd><dt>Оффлайн-режим</dt><dd id="sw-status">${'serviceWorker' in navigator ? 'проверяем…' : 'недоступен в этом браузере'}</dd><dt>Версия</dt><dd>${esc(APP_VERSION.indexOf('__') === 0 ? 'локальная сборка' : APP_VERSION)}</dd></dl>
+      <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" type="button" id="btn-update">Проверить обновления</button></div>
       <p class="small" style="margin-top:10px">Чтобы пользоваться без интернета: откройте меню браузера и выберите «Добавить на главный экран» (Android, Chrome) или «На экран Домой» (iPhone, Safari). После первого открытия всё работает оффлайн.</p>
       <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" type="button" id="btn-install" hidden>Установить приложение</button><button class="btn btn-danger btn-sm" type="button" id="btn-reset">Удалить все данные</button></div>`);
     $('#btn-reset', misc).addEventListener('click', () => { if (confirm('Удалить все тренировки и настройки? Это нельзя отменить. Сначала лучше сделать экспорт.')) { if (confirm('Точно удалить?')) { state = defaultState(); draft = null; saveDraft(); save(); render(); toast('Данные удалены'); } } });
     updateSwStatus();
+    $('#btn-update', misc).addEventListener('click', checkForUpdate);
     if (deferredInstall) { const b = $('#btn-install', misc); b.hidden = false; b.addEventListener('click', async () => { deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; b.hidden = true; }); }
   }
 
@@ -1259,10 +1262,35 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   function updateOnline() { $('#offline-badge').hidden = navigator.onLine; }
   window.addEventListener('online', updateOnline); window.addEventListener('offline', updateOnline); updateOnline();
   let swState = 'serviceWorker' in navigator ? 'проверяем…' : 'недоступен в этом браузере';
+  let swReg = null, reloading = false;
   function updateSwStatus() { const el = $('#sw-status'); if (el) el.textContent = swState; }
+  function offerUpdate() {
+    const t = $('#toast');
+    t.innerHTML = 'Доступна новая версия. <button type="button" class="btn btn-sm" id="btn-reload" style="margin-left:8px">Обновить</button>';
+    t.hidden = false; clearTimeout(toastT);
+    $('#btn-reload').addEventListener('click', () => {
+      if (swReg && swReg.waiting) swReg.waiting.postMessage('skipWaiting');
+      else location.reload();
+    });
+  }
+  function checkForUpdate() {
+    if (!swReg) { toast(location.protocol === 'file:' ? 'Файл открыт локально: скачайте новую версию файла' : 'Оффлайн-режим не включён — просто перезагрузите страницу'); return; }
+    toast('Проверяем…');
+    swReg.update().then(() => { setTimeout(() => { if (!(swReg.installing || swReg.waiting)) toast('У вас последняя версия'); }, 1500); }).catch(() => toast('Нет сети — проверим позже'));
+  }
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    navigator.serviceWorker.register('sw.js').then((reg) => { swState = 'включён'; updateSwStatus(); reg.addEventListener('updatefound', () => { const nw = reg.installing; nw && nw.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) toast('Доступна новая версия — перезагрузите страницу'); }); }); })
-      .catch(() => { swState = 'не удалось включить'; updateSwStatus(); });
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      swReg = reg; swState = 'включён'; updateSwStatus();
+      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate();
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        nw && nw.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(); });
+      });
+      // Проверять обновления при каждом возврате в приложение
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+      reg.update().catch(() => {});
+    }).catch(() => { swState = 'не удалось включить'; updateSwStatus(); });
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloading) return; reloading = true; location.reload(); });
   } else if (location.protocol === 'file:') { swState = 'файл открыт локально, всё уже оффлайн'; }
 
   applyTheme();
