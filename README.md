@@ -6,6 +6,7 @@
 
 Способ 1, рекомендуемый: через сайт. Ветка публикуется на GitHub Pages автоматически (workflow в `.github/workflows/pages.yml`).
 
+0. Один раз включить Pages в репозитории: Settings → Pages → Build and deployment → Source: «GitHub Actions». После этого запустить workflow «Publish to GitHub Pages» (вкладка Actions → Run workflow) или просто сделать любой push. Токен Actions не может включить Pages сам, поэтому этот шаг ручной.
 1. Откройте на телефоне https://ttgxxiixiv.github.io/Pull-up-machine/
 2. Android (Chrome): меню ⋮ → «Добавить на главный экран» или «Установить приложение».
    iPhone (Safari): кнопка «Поделиться» → «На экран „Домой“».
