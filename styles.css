@@ -299,3 +299,10 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .day-hint.warn { color: var(--serious); }
 .day-item.done { opacity: 1; background: color-mix(in srgb, var(--good) 12%, var(--surface-2)); }
 .session.rest .session-title { color: var(--good-text); }
+
+/* Пропуск блока упражнений */
+.set-actions { margin-top: 8px; }
+.set-actions .btn { flex: 0 0 auto; }
+.exercise.skipped h3 { color: var(--muted); text-decoration: line-through; }
+.skip-reason { width: 100%; margin-top: 8px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--axis); background: var(--surface); min-height: 40px; }
+.session-body tr.skipped td { color: var(--muted); }

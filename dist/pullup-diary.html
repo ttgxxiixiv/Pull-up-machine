@@ -314,6 +314,13 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .day-item.done { opacity: 1; background: color-mix(in srgb, var(--good) 12%, var(--surface-2)); }
 .session.rest .session-title { color: var(--good-text); }
 
+/* Пропуск блока упражнений */
+.set-actions { margin-top: 8px; }
+.set-actions .btn { flex: 0 0 auto; }
+.exercise.skipped h3 { color: var(--muted); text-decoration: line-through; }
+.skip-reason { width: 100%; margin-top: 8px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--axis); background: var(--surface); min-height: 40px; }
+.session-body tr.skipped td { color: var(--muted); }
+
 </style>
 </head>
 <body>
@@ -409,7 +416,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     if (!(out.cursor.week >= 1)) out.cursor.week = 1;
     if (!out.cursor.sinceTs) out.cursor.sinceTs = 0;
     out.sessions = Array.isArray(out.sessions) ? out.sessions.filter((s) => s && s.date && Array.isArray(s.exercises)) : [];
-    out.sessions.forEach((s) => { if (!s.id) s.id = uid(); });
+    out.sessions.forEach((s) => { if (!s.id) s.id = uid(); s.exercises.forEach((e) => { if (!Array.isArray(e.sets)) e.sets = []; }); });
     return out;
   }
   function save() {
@@ -640,6 +647,12 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       }))
     };
   }
+  // Подходы по плану для упражнения (когда блок возвращают после пропуска)
+  function plannedSets(d, key) {
+    const day = DAY_TITLES[d.type] ? dayByKey(d.week || state.cursor.week, d.type) : null;
+    const e = day && day.exercises.find((x) => x.key === key);
+    return e ? e.sets.map((st) => ({ v: st.v, w: st.w || 0, target: st.v })) : [{ v: null, w: 0, target: null }];
+  }
   function newRestDraft(date) {
     return { id: uid(), editing: false, program: false, week: state.cursor.week, type: 'rest', title: 'День отдыха', date: date || todayStr(), notes: '', feel: 3, exercises: [] };
   }
@@ -838,6 +851,13 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       const unitLabel = e.unit === 'sec' ? 'с' : 'повт.';
       const targetTxt = e.sets[0] && e.sets[0].target != null ? `цель ${e.sets.length}×${e.sets[0].target}${e.unit === 'sec' ? ' с' : ''}${e.sets[0].w ? ' ' + fmtKg(e.sets[0].w) : ''}` : (e.key === 'maxtest' ? 'один подход на максимум' : '');
       const meta = [e.rir != null ? `RIR ${e.rir}` : '', e.tempo ? `${e.tempo}–${e.tempo + 1} с` : '', e.rest ? 'отдых ' + fmtRest(e.rest) : ''].filter(Boolean).join(' · ');
+      if (e.skipped) {
+        return `<div class="exercise skipped" data-ei="${ei}">
+          <div class="exercise-head"><h3>${esc(e.name)}</h3><button type="button" class="btn btn-ghost btn-sm" data-unskip="${ei}">Вернуть</button></div>
+          <div class="small">Блок пропущен${targetTxt ? ' · ' + esc(targetTxt) : ''}</div>
+          <input type="text" class="skip-reason" placeholder="Причина, например: нет гантели" value="${esc(e.skipReason || '')}" data-reason="${ei}" aria-label="Причина пропуска">
+        </div>`;
+      }
       return `<div class="exercise" data-ei="${ei}">
         <div class="exercise-head"><h3>${esc(e.name)}</h3><span class="exercise-target">${esc(targetTxt)}</span></div>
         ${meta ? `<div class="small">${esc(meta)}</div>` : ''}
@@ -848,9 +868,20 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
           ${e.weighted ? `<input type="number" inputmode="decimal" min="0" step="0.5" placeholder="кг" value="${st.w || ''}" data-ei="${ei}" data-si="${si}" data-f="w" aria-label="вес, кг">` : ''}
           <button type="button" class="del" data-del="${ei}:${si}" aria-label="Удалить подход">×</button>
         </div>`).join('')}
-        <button type="button" class="btn btn-ghost btn-sm set-add" data-add="${ei}">+ подход</button>
+        <div class="btn-row set-actions"><button type="button" class="btn btn-ghost btn-sm set-add" data-add="${ei}">+ подход</button><button type="button" class="btn btn-ghost btn-sm set-skip" data-skip="${ei}">Пропустить блок</button></div>
       </div>`;
     }).join('');
+
+    $$('[data-skip]', wrap).forEach((b) => b.addEventListener('click', () => {
+      const e = d.exercises[+b.dataset.skip]; e.skipped = true; saveDraft(); renderFormExercises(wrap);
+      const r = $(`[data-reason="${b.dataset.skip}"]`, wrap); if (r) r.focus();
+    }));
+    $$('[data-unskip]', wrap).forEach((b) => b.addEventListener('click', () => {
+      const e = d.exercises[+b.dataset.unskip]; e.skipped = false;
+      if (!e.sets.length) e.sets = plannedSets(d, e.key);
+      saveDraft(); renderFormExercises(wrap);
+    }));
+    $$('[data-reason]', wrap).forEach((inp) => inp.addEventListener('input', (ev) => { d.exercises[+inp.dataset.reason].skipReason = ev.target.value; saveDraft(); }));
 
     $$('input[data-f]', wrap).forEach((inp) => {
       inp.addEventListener('input', (e) => {
@@ -874,15 +905,17 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 
   function saveSession() {
     const d = draft;
-    const filled = d.exercises.some((e) => e.sets.some((st) => st.v != null && st.v !== ''));
-    if (!filled && d.type !== 'rest') { toast('Внесите хотя бы один подход'); return; }
+    const filled = d.exercises.some((e) => !e.skipped && e.sets.some((st) => st.v != null && st.v !== ''));
+    if (!filled && d.type !== 'rest') { toast(d.exercises.length && d.exercises.every((e) => e.skipped) ? 'Все блоки пропущены — тогда лучше отметить день отдыха' : 'Внесите хотя бы один подход'); return; }
     const session = {
       id: d.id, date: d.date || todayStr(), week: d.week, type: d.type, title: d.title, program: !!d.program,
       notes: d.notes || '', feel: d.feel || 3, createdAt: d.createdAt || Date.now(),
-      exercises: d.exercises.map((e) => ({
-        key: e.key, unit: e.unit, weighted: e.weighted, rir: e.rir, tempo: e.tempo,
-        sets: e.sets.filter((st) => st.v != null && st.v !== '').map((st) => ({ v: +st.v, w: +st.w || 0, target: st.target == null ? null : st.target }))
-      })).filter((e) => e.sets.length)
+      exercises: d.exercises.map((e) => (e.skipped
+        ? { key: e.key, unit: e.unit, weighted: e.weighted, skipped: true, skipReason: (e.skipReason || '').trim(), sets: [] }
+        : {
+          key: e.key, unit: e.unit, weighted: e.weighted, rir: e.rir, tempo: e.tempo,
+          sets: e.sets.filter((st) => st.v != null && st.v !== '').map((st) => ({ v: +st.v, w: +st.w || 0, target: st.target == null ? null : st.target }))
+        })).filter((e) => e.skipped || e.sets.length)
     };
     const idx = state.sessions.findIndex((s) => s.id === session.id);
     if (idx >= 0) state.sessions[idx] = session; else state.sessions.push(session);
@@ -892,7 +925,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       msg += ' · неделя ' + state.cursor.week + ' выполнена полностью';
     }
     // Автоподстройка веса гантели: сделали 3×12 — предлагаем +2 кг
-    const row = session.exercises.find((e) => e.key === 'row');
+    const row = session.exercises.find((e) => e.key === 'row' && !e.skipped && e.sets.length);
     if (row && row.sets.length >= 3 && row.sets.every((st) => st.v >= 12)) {
       const w = Math.max(...row.sets.map((st) => st.w));
       if (w && w >= (state.settings.rowWeight || 0)) { state.settings.rowWeight = w + 2; msg += ' · гантель в следующий раз ' + (w + 2) + ' кг'; }
@@ -938,6 +971,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     if (!s.exercises.length) return `<div class="session-body"><div class="small">${s.type === 'rest' ? 'Отдых без тренировки.' : 'Без подходов.'}${feel ? ' Самочувствие: ' + feel + '.' : ''}</div></div>`;
     return `<div class="session-body"><table>${s.exercises.map((e) => {
       const ex = EX[e.key] || { name: e.key, unit: 'reps' };
+      if (e.skipped) return `<tr class="skipped"><td>${esc(ex.name)}</td><td>пропущено${e.skipReason ? ' · ' + esc(e.skipReason) : ''}</td></tr>`;
       const sets = e.sets.map((st) => `${st.v}${ex.unit === 'sec' ? ' с' : ''}${st.w ? '<span class="muted">' + (e.key === 'row' ? '/' + st.w + ' кг' : fmtKg(st.w)) + '</span>' : ''}`).join(' · ');
       return `<tr><td>${esc(ex.name)}${e.tempo ? ` <span class="muted">${e.tempo} с</span>` : ''}</td><td>${sets}</td></tr>`;
     }).join('')}</table>${feel ? `<div class="small" style="margin-top:4px">Самочувствие: ${feel}</div>` : ''}</div>`;
