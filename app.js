@@ -504,7 +504,7 @@
           ${e.weighted ? `<input type="number" inputmode="decimal" min="0" step="0.5" placeholder="кг" value="${st.w || ''}" data-ei="${ei}" data-si="${si}" data-f="w" aria-label="вес, кг">` : ''}
           <button type="button" class="del" data-del="${ei}:${si}" aria-label="Удалить подход">×</button>
         </div>`).join('')}
-        <div class="btn-row set-actions"><button type="button" class="btn btn-ghost btn-sm set-add" data-add="${ei}">+ подход</button><button type="button" class="btn btn-ghost btn-sm set-skip" data-skip="${ei}">Пропустить блок</button></div>
+        <div class="btn-row set-actions"><button type="button" class="btn btn-ghost btn-sm set-add" data-add="${ei}">+ подход</button><button type="button" class="btn btn-ghost btn-sm set-skip" data-skip="${ei}">Пропустить</button></div>
       </div>`;
     }).join('');
 
