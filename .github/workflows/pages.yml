@@ -25,7 +25,7 @@ jobs:
       - name: Stamp version into app and service worker
         run: |
           VERSION="${GITHUB_SHA::7}"
-          sed -i "s/__BUILD__/$VERSION/" sw.js app.js
+          sed -i "s/__BUILD__/$VERSION/g" sw.js app.js index.html
           echo "Version $VERSION"
       - name: Build single-file version
         run: node build.mjs "${GITHUB_SHA::7}"

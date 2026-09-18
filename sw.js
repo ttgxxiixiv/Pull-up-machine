@@ -16,7 +16,8 @@ const NETWORK_TIMEOUT_MS = 4000;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    // cache: 'reload' — мимо HTTP-кэша браузера, чтобы в кэш попала действительно свежая версия
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
   );
 });
 
@@ -46,7 +47,12 @@ self.addEventListener('fetch', (event) => {
         return Response.error();
       });
       const timer = setTimeout(() => { if (!settled) { settled = true; resolve(useCache()); } }, NETWORK_TIMEOUT_MS);
-      fetch(event.request)
+      // no-cache: браузер обязан спросить сервер, не изменился ли файл (иначе GitHub Pages
+      // может отдавать старый CSS/JS из HTTP-кэша до 10 минут после публикации)
+      const req = event.request.mode === 'navigate'
+        ? new Request(event.request.url, { cache: 'no-cache', credentials: 'same-origin' })
+        : new Request(event.request, { cache: 'no-cache' });
+      fetch(req)
         .then((resp) => {
           if (resp && resp.ok) {
             const copy = resp.clone();

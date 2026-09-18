@@ -10,8 +10,8 @@ const js = readFileSync('app.js', 'utf8').replace(/<\/script/gi, '<\\/script').r
 const icon = 'data:image/svg+xml;base64,' + readFileSync('icon.svg').toString('base64');
 
 let out = html
-  .replace('<link rel="stylesheet" href="styles.css">', () => `<style>\n${css}\n</style>`)
-  .replace('<script src="app.js"></script>', () => `<script>\n${js}\n</script>`)
+  .replace('<link rel="stylesheet" href="styles.css?v=__BUILD__">', () => `<style>\n${css}\n</style>`)
+  .replace('<script src="app.js?v=__BUILD__"></script>', () => `<script>\n${js}\n</script>`)
   .replace('<link rel="manifest" href="manifest.webmanifest">\n', '')
   .replace('href="icon.svg" type="image/svg+xml"', `href="${icon}" type="image/svg+xml"`)
   .replace('<link rel="apple-touch-icon" href="icon.svg">', `<link rel="apple-touch-icon" href="${icon}">`);
