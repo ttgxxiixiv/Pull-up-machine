@@ -287,6 +287,33 @@ textarea.export { width: 100%; min-height: 110px; font-family: ui-monospace, Men
 details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .hidden { display: none !important; }
 
+/* Календарь: тренировки, отдых, пропуски */
+.cal { display: grid; gap: 4px; margin-top: 6px; }
+.cal-row { display: grid; grid-template-columns: 34px repeat(7, 1fr); gap: 4px; align-items: center; }
+.cal-head span { font-size: 11px; color: var(--muted); text-align: center; }
+.cal-month { font-size: 11px; color: var(--muted); }
+.cal-day {
+  display: flex; align-items: center; justify-content: center; aspect-ratio: 1; max-height: 40px;
+  border-radius: 8px; font-size: 12px; font-variant-numeric: tabular-nums; cursor: default;
+  background: var(--surface-2); color: var(--ink-2); border: 1px solid transparent;
+}
+.cal-day.workout { background: var(--series-1); color: #fff; font-weight: 600; }
+.cal-day.rest { background: var(--good); color: #fff; font-weight: 600; }
+.cal-day.missed { background: color-mix(in srgb, var(--serious) 38%, var(--surface)); color: var(--ink); }
+.cal-day.future { background: transparent; border-color: var(--grid); color: var(--muted); }
+.cal-day.before { background: transparent; color: var(--muted); opacity: 0.5; }
+.cal-day.today { box-shadow: 0 0 0 2px var(--ink); }
+.legend .sw.workout { background: var(--series-1); }
+.legend .sw.rest { background: var(--good); }
+.legend .sw.missed { background: color-mix(in srgb, var(--serious) 38%, var(--surface)); border: 1px solid var(--serious); }
+.legend .sw.future { background: transparent; border: 1px solid var(--axis); }
+.day-status { display: flex; align-items: center; gap: 8px; flex: none; }
+.day-status .chev { color: var(--muted); }
+.day-hint { display: block; font-size: 12px; margin-top: 4px; color: var(--ink-2); }
+.day-hint.warn { color: var(--serious); }
+.day-item.done { opacity: 1; background: color-mix(in srgb, var(--good) 12%, var(--surface-2)); }
+.session.rest .session-title { color: var(--good-text); }
+
 </style>
 </head>
 <body>
@@ -355,7 +382,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   const defaultState = () => ({
     version: 1,
     settings: { daysPerWeek: 4, strengthMode: 'weighted', rowWeight: 12, bodyweight: null, theme: 'auto' },
-    cursor: { week: 1, day: 0 },
+    cursor: { week: 1, sinceTs: 0 },
     sessions: [],
     createdAt: todayStr()
   });
@@ -378,6 +405,9 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     const out = Object.assign(base, obj || {});
     out.settings = Object.assign(base.settings, (obj && obj.settings) || {});
     out.cursor = Object.assign(base.cursor, (obj && obj.cursor) || {});
+    delete out.cursor.day; // старый формат курсора
+    if (!(out.cursor.week >= 1)) out.cursor.week = 1;
+    if (!out.cursor.sinceTs) out.cursor.sinceTs = 0;
     out.sessions = Array.isArray(out.sessions) ? out.sessions.filter((s) => s && s.date && Array.isArray(s.exercises)) : [];
     out.sessions.forEach((s) => { if (!s.id) s.id = uid(); });
     return out;
@@ -545,26 +575,18 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     return { info, days };
   }
 
-  // Порядок дней для курсора
-  function programDays(week) {
-    const plan = planForWeek(week);
-    const keys = state.settings.daysPerWeek === 4 ? ['volume', 'strength', 'variety', 'light'] : ['volume', 'strength', 'variety'];
-    return keys.map((k) => plan.days.find((d) => d.key === k));
-  }
+  // Неделя программы: набор тренировок, которые выполняются в любом порядке
+  const REQUIRED_KEYS = () => (state.settings.daysPerWeek === 4 ? ['volume', 'strength', 'variety', 'light'] : ['volume', 'strength', 'variety']);
+  const isWorkout = (s) => s.type !== 'rest';
   function dayByKey(week, key) { return planForWeek(week).days.find((d) => d.key === key); }
-
-  function advanceCursor() {
-    const n = programDays(state.cursor.week).length;
-    let { week, day } = state.cursor;
-    day += 1;
-    if (day >= n) { day = 0; week += 1; }
-    state.cursor = { week, day };
+  // Тренировки, засчитанные в текущую неделю (после последнего старта недели)
+  function weekSessions() {
+    const c = state.cursor;
+    return state.sessions.filter((s) => s.program && s.week === c.week && isWorkout(s) && (s.createdAt || 0) >= (c.sinceTs || 0));
   }
-  function clampCursor() {
-    const n = programDays(state.cursor.week).length;
-    if (state.cursor.day >= n) state.cursor.day = 0;
-    if (state.cursor.week < 1) state.cursor.week = 1;
-  }
+  function doneMap() { const m = new Map(); weekSessions().forEach((s) => { if (!m.has(s.type) || m.get(s.type).date < s.date) m.set(s.type, s); }); return m; }
+  function weekComplete() { const d = doneMap(); return REQUIRED_KEYS().every((k) => d.has(k)); }
+  function startWeek(week) { state.cursor = { week: Math.max(1, week), sinceTs: Date.now() }; planWeek = null; }
 
   // ---------- Статистика ----------
   const PULL_KEYS = ['pullup', 'chin', 'neutral', 'negative', 'maxtest'];
@@ -575,9 +597,15 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     const list = sortedSessions().filter((s) => s.type === key && s.id !== beforeId);
     return list[list.length - 1] || null;
   }
-  function sessionsInLastDays(days, dateStr) {
+  function workoutsInLastDays(days, dateStr) {
     const from = addDays(dateStr || todayStr(), -(days - 1));
-    return state.sessions.filter((s) => s.date >= from && s.date <= (dateStr || todayStr()));
+    return state.sessions.filter((s) => isWorkout(s) && s.date >= from && s.date <= (dateStr || todayStr()));
+  }
+  // Что было в каждый день: тренировка, отдых или ничего
+  function dayKinds() {
+    const m = new Map();
+    state.sessions.forEach((s) => { if (isWorkout(s)) m.set(s.date, 'workout'); else if (!m.has(s.date)) m.set(s.date, 'rest'); });
+    return m;
   }
 
   // Оценка выполнения: все ли подходы дошли до цели (или цели − 2)
@@ -612,6 +640,9 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       }))
     };
   }
+  function newRestDraft(date) {
+    return { id: uid(), editing: false, program: false, week: state.cursor.week, type: 'rest', title: 'День отдыха', date: date || todayStr(), notes: '', feel: 3, exercises: [] };
+  }
   function draftFromSession(s) {
     const d = JSON.parse(JSON.stringify(s));
     d.editing = true;
@@ -621,10 +652,11 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 
   // ---------- Рендер ----------
   let currentTab = 'today';
+  let planWeek = null;
   const view = $('#view');
 
   function render() {
-    clampCursor();
+    if (!(state.cursor.week >= 1)) state.cursor.week = 1;
     $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab));
     const renderers = { today: renderToday, diary: renderDiary, progress: renderProgress, plan: renderPlan, settings: renderSettings };
     view.innerHTML = '';
@@ -637,71 +669,121 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   // --- Сегодня ---
   function renderToday() {
     if (draft) { renderForm(); return; }
-    const { week, day } = state.cursor;
-    const days = programDays(week);
-    const cur = days[day];
+    const week = state.cursor.week;
     const info = weekInfo(week);
+    const plan = planForWeek(week);
+    const required = REQUIRED_KEYS();
+    const done = doneMap();
     const today = todayStr();
-    const todays = state.sessions.filter((s) => s.date === today);
-    const last7 = sessionsInLastDays(7);
-    const lastAny = sortedSessions().slice(-1)[0];
+    const kinds = dayKinds();
+    const todayKind = kinds.get(today);
+    const last7 = workoutsInLastDays(7);
+    const workouts = sortedSessions().filter(isWorkout);
+    const lastWorkout = workouts[workouts.length - 1];
+    const doneRequired = required.filter((k) => done.has(k)).length;
 
     let warn = '';
-    if (todays.length) warn += `<div class="callout good"><span class="ico">✓</span><span>Сегодня уже записана тренировка: ${esc(todays.map((s) => s.title).join(', '))}. Ещё одна — только если это лёгкий день.</span></div>`;
-    else if (last7.length >= 4) warn += `<div class="callout warn"><span class="ico">!</span><span>За последние 7 дней уже ${last7.length} тренировки. Лучше отдохнуть: программа рассчитана на 3–4 занятия в неделю.</span></div>`;
-    else if (lastAny && lastAny.date === addDays(today, -1) && lastAny.type !== 'light' && cur.key !== 'light') warn += `<div class="callout"><span class="ico">i</span><span>Вчера была тренировка «${esc(DAY_SHORT[lastAny.type])}». Между тяжёлыми днями нужен хотя бы день отдыха — или сделайте сегодня лёгкий день.</span></div>`;
+    if (todayKind === 'workout') warn += `<div class="callout good"><span class="ico">✓</span><span>Сегодня уже записана тренировка. Ещё одна имеет смысл только если это лёгкий день.</span></div>`;
+    else if (todayKind === 'rest') warn += `<div class="callout good"><span class="ico">☾</span><span>Сегодня отмечен день отдыха.</span></div>`;
+    else if (last7.length >= 4) warn += `<div class="callout warn"><span class="ico">!</span><span>За последние 7 дней уже ${last7.length} тренировки. Программа рассчитана на 3–4 в неделю — сегодня лучше отдых.</span></div>`;
+    else if (lastWorkout && lastWorkout.date === addDays(today, -1) && lastWorkout.type !== 'light') warn += `<div class="callout"><span class="ico">i</span><span>Вчера была тренировка «${esc(DAY_SHORT[lastWorkout.type] || lastWorkout.title)}». После тяжёлого дня лучше отдых или лёгкий день.</span></div>`;
 
-    // Подсказка по прошлому выполнению этого дня
-    let adapt = '';
-    const prev = lastSessionOfType(cur.key);
-    if (prev && cur.key !== 'light') {
-      const ev = evaluate(prev);
-      if (ev.fail) adapt = `<div class="callout warn"><span class="ico">↺</span><span>В прошлый раз (${fmtShort(prev.date)}) этот день не вышел полностью. Сегодня возьмите вариант с запасом: на 2 повторения меньше в каждом подходе, но все подходы чисто.</span></div>`;
-      else if (ev.ok && ev.total) adapt = `<div class="callout good"><span class="ico">↑</span><span>Прошлый раз (${fmtShort(prev.date)}) выполнен полностью. Идём по плану.</span></div>`;
-    }
+    const items = plan.days.map((d) => {
+      const isReq = required.includes(d.key);
+      const ds = done.get(d.key);
+      const prev = lastSessionOfType(d.key);
+      let hint = '';
+      if (prev && d.key !== 'light' && !ds) {
+        const ev = evaluate(prev);
+        if (ev.fail) hint = `<span class="day-hint warn">↺ В прошлый раз не вышло — сегодня на 2 повторения меньше, но чисто</span>`;
+      }
+      const status = ds ? `<span class="pill pill-good">✓ ${esc(fmtShort(ds.date))}</span>` : (isReq ? '' : '<span class="pill pill-muted">по желанию</span>');
+      return `<button class="day-item${ds ? ' done' : ''}" type="button" data-key="${d.key}">
+        <span><span class="day-title">${esc(d.title)}</span><br><span class="day-sub">${esc(d.summary)}</span>${hint}</span>
+        <span class="day-status">${status}<span class="chev">›</span></span></button>`;
+    }).join('');
 
-    card(`
+    const complete = weekComplete();
+    const el = card(`
       <div class="card-head">
         <div>
-          <div class="small">Неделя ${week} · блок ${info.block + 1}${info.deload ? ' · разгрузка' : ''} · ${state.settings.daysPerWeek} дн/нед</div>
-          <h1>${esc(cur.title)}</h1>
+          <div class="small">Блок ${info.block + 1}${info.deload ? ' · разгрузка' : ' · рабочая ' + (info.pos + 1) + ' из 3'} · ${state.settings.daysPerWeek} дн/нед</div>
+          <h1>Неделя ${week}</h1>
         </div>
-        <span class="pill${info.deload ? ' pill-muted' : ''}">${info.deload ? 'Разгрузка' : 'Тренировка ' + (day + 1) + ' из ' + days.length}</span>
+        <span class="pill${complete ? ' pill-good' : ''}">${doneRequired} из ${required.length} сделано</span>
       </div>
-      ${warn}${adapt}
-      <p style="margin-top:8px"><strong>${esc(cur.summary)}</strong></p>
-      ${cur.exercises.map((e) => exerciseTargetHtml(e)).join('')}
-      <ul class="tips">${cur.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-      <div class="btn-row" style="margin-top:14px">
-        <button class="btn" id="btn-start" type="button">Записать тренировку</button>
-        <button class="btn btn-ghost" id="btn-skip" type="button">Пропустить день</button>
+      ${warn}
+      ${calendarHtml(1)}
+      <p class="small" style="margin:10px 0 8px">Выберите тренировку на сегодня. Порядок свободный, между тяжёлыми днями оставляйте день отдыха.</p>
+      <div class="day-list">${items}</div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-ghost" type="button" id="btn-rest">☾ День отдыха</button>
+        ${complete
+          ? `<button class="btn" type="button" id="btn-next">Начать неделю ${week + 1} →</button>`
+          : `<button class="btn btn-ghost" type="button" id="btn-close">Завершить неделю</button>`}
       </div>
+      ${complete ? '<div class="callout good" style="margin-top:10px"><span class="ico">✓</span><span>Все тренировки недели сделаны. Можно переходить дальше или добавить лёгкий день.</span></div>' : ''}
     `);
-
-    const other = planForWeek(week).days.filter((d) => d.key !== cur.key);
-    const el = card(`
-      <h2>Другая тренировка на этой неделе</h2>
-      <p class="small">Например, если сегодня нет сил на тяжёлый день. Лёгкий день можно добавлять сверх плана.</p>
-      <div class="day-list">
-        ${other.map((d) => `<button class="day-item" type="button" data-key="${d.key}"><span><span class="day-title">${esc(d.title)}</span><br><span class="day-sub">${esc(d.summary)}</span></span><span>›</span></button>`).join('')}
-      </div>
-    `);
-    $$('.day-item', el).forEach((b) => b.addEventListener('click', () => {
-      const d = dayByKey(week, b.dataset.key);
-      const idx = days.findIndex((x) => x.key === d.key);
-      draft = newDraftFromDay(week, d, idx >= 0);
-      draft.cursorDay = idx;
-      saveDraft(); render();
+    bindCalendarTips(el);
+    $$('.day-item', el).forEach((btn) => btn.addEventListener('click', () => {
+      const d = dayByKey(week, btn.dataset.key);
+      if (done.has(d.key) && !confirm('«' + d.title + '» на этой неделе уже записана. Записать ещё раз?')) return;
+      draft = newDraftFromDay(week, d, true); saveDraft(); render();
     }));
+    $('#btn-rest', el).addEventListener('click', () => {
+      if (todayKind === 'rest') { toast('Отдых сегодня уже отмечен'); return; }
+      if (todayKind === 'workout' && !confirm('Сегодня уже есть тренировка. Всё равно отметить отдых?')) return;
+      draft = newRestDraft(today); saveDraft(); render();
+    });
+    if ($('#btn-next', el)) $('#btn-next', el).addEventListener('click', () => { startWeek(week + 1); save(); render(); toast('Неделя ' + (week + 1) + ' началась'); });
+    if ($('#btn-close', el)) $('#btn-close', el).addEventListener('click', () => {
+      const missing = required.filter((k) => !done.has(k)).map((k) => DAY_SHORT[k]);
+      if (confirm(`Не сделано: ${missing.join(', ')}. Завершить неделю ${week} и перейти к неделе ${week + 1}?`)) { startWeek(week + 1); save(); render(); toast('Неделя ' + (week + 1) + ' началась'); }
+    });
 
-    $('#btn-start').addEventListener('click', () => { draft = newDraftFromDay(week, cur, true); draft.cursorDay = day; saveDraft(); render(); });
-    $('#btn-skip').addEventListener('click', () => { if (confirm('Пропустить «' + cur.title + '» и перейти к следующей тренировке?')) { advanceCursor(); save(); render(); toast('День пропущен'); } });
-
-    if (lastAny) {
-      card(`<h2>Последняя тренировка</h2><div class="small">${esc(fmtDate(lastAny.date))} · ${esc(lastAny.title)}</div>${sessionTableHtml(lastAny)}`);
+    if (lastWorkout) {
+      card(`<h2>Последняя тренировка</h2><div class="small">${esc(fmtDate(lastWorkout.date))} · ${esc(lastWorkout.title)}</div>${sessionTableHtml(lastWorkout)}`);
     } else {
-      card(`<h2>Как пользоваться</h2><ul class="tips"><li>Нажмите «Записать тренировку», внесите фактические повторения по подходам и сохраните.</li><li>Программа сама переходит к следующему дню. Пропустили — нажмите «Пропустить день».</li><li>Прогресс хранится на этом устройстве. Чтобы не потерять — делайте экспорт в разделе «Ещё».</li><li>Добавьте страницу на главный экран телефона: тогда дневник откроется и без интернета.</li></ul>`);
+      card(`<h2>Как пользоваться</h2><ul class="tips"><li>Выберите любую тренировку недели, внесите фактические повторения по подходам и сохраните.</li><li>В день без тренировки нажмите «День отдыха» — в календаре он будет зелёным, а день без записи считается пропуском.</li><li>Когда все обязательные тренировки недели сделаны, появится кнопка перехода к следующей неделе.</li><li>Прогресс хранится на этом устройстве. Чтобы не потерять — делайте экспорт в разделе «Ещё».</li></ul>`);
     }
+  }
+
+  // Календарь: тренировки, отдых и пропуски разными цветами
+  const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const KIND_LABEL = { workout: 'тренировка', rest: 'отдых', missed: 'пропуск', future: '', before: 'до начала дневника' };
+  function calendarHtml(weeks, withLegend) {
+    const today = todayStr();
+    const start = state.createdAt || today;
+    const kinds = dayKinds();
+    const titles = new Map(); state.sessions.forEach((s) => { titles.set(s.date, (titles.get(s.date) ? titles.get(s.date) + ', ' : '') + s.title); });
+    const lastMon = mondayOf(today);
+    const firstMon = addDays(lastMon, -7 * (weeks - 1));
+    let html = `<div class="cal"><div class="cal-row cal-head"><span></span>${WD.map((d) => `<span>${d}</span>`).join('')}</div>`;
+    let prevMonth = '';
+    for (let w = 0; w < weeks; w++) {
+      const mon = addDays(firstMon, w * 7);
+      const month = parseDate(mon).toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
+      html += `<div class="cal-row"><span class="cal-month">${month !== prevMonth ? esc(month) : ''}</span>`;
+      prevMonth = month;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(mon, i);
+        let kind = d > today ? 'future' : d < start ? 'before' : (kinds.get(d) || 'missed');
+        const tip = `${fmtShort(d)}: ${titles.get(d) || KIND_LABEL[kind]}`;
+        html += `<span class="cal-day ${kind}${d === today ? ' today' : ''}" data-tip="${esc(tip)}" role="img" aria-label="${esc(tip)}">${+d.slice(8)}</span>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+    if (withLegend) html += `<div class="legend"><span><span class="sw workout"></span>тренировка</span><span><span class="sw rest"></span>отдых</span><span><span class="sw missed"></span>пропуск</span><span><span class="sw future"></span>впереди</span></div>`;
+    return html;
+  }
+  function bindCalendarTips(root) {
+    const tip = $('#tooltip');
+    $$('[data-tip]', root).forEach((h) => {
+      const show = (ev) => { tip.textContent = h.dataset.tip; tip.hidden = false; const x = Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, ev.clientX - tip.offsetWidth / 2)); tip.style.left = x + 'px'; tip.style.top = (ev.clientY - 44) + 'px'; };
+      h.addEventListener('pointerenter', show); h.addEventListener('pointerleave', () => { tip.hidden = true; });
+      h.addEventListener('click', (ev) => { if (tip.hidden || tip.textContent !== h.dataset.tip) show(ev); else tip.hidden = true; });
+    });
   }
 
   function exerciseTargetHtml(e) {
@@ -729,12 +811,13 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       <div class="field-row">
         <div class="field"><label for="f-feel">Самочувствие</label>
           <select id="f-feel">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${d.feel == n ? ' selected' : ''}>${['', 'Очень тяжело', 'Тяжело', 'Нормально', 'Хорошо', 'Отлично'][n]}</option>`).join('')}</select></div>
-        <div class="field"><label for="f-rest">Таймер отдыха, с</label><input id="f-rest" type="number" min="15" step="15" value="${d.restSec || 120}"></div>
+        <div class="field${d.type === 'rest' ? ' hidden' : ''}"><label for="f-rest">Таймер отдыха, с</label><input id="f-rest" type="number" min="15" step="15" value="${d.restSec || 120}"></div>
       </div>
-      <div class="field"><label for="f-notes">Заметки</label><textarea id="f-notes" placeholder="Как прошло, что болит, что поменять">${esc(d.notes || '')}</textarea></div>
+      ${d.type === 'rest' ? '<p class="small" style="margin-top:12px">День отдыха попадёт в календарь зелёным. Отмечайте и его: тогда видно, где был осознанный отдых, а где пропуск.</p>' : ''}
+      <div class="field"><label for="f-notes">Заметки</label><textarea id="f-notes" placeholder="${d.type === 'rest' ? 'Как самочувствие, что болит' : 'Как прошло, что болит, что поменять'}">${esc(d.notes || '')}</textarea></div>
       <div class="btn-row" style="margin-top:14px">
-        <button class="btn" type="button" id="btn-save">Сохранить тренировку</button>
-        <button class="btn btn-ghost" type="button" id="btn-timer">Таймер отдыха</button>
+        <button class="btn" type="button" id="btn-save">${d.type === 'rest' ? 'Сохранить' : 'Сохранить тренировку'}</button>
+        ${d.type === 'rest' ? '' : '<button class="btn btn-ghost" type="button" id="btn-timer">Таймер отдыха</button>'}
       </div>
     `);
     const exWrap = $('#f-ex', el);
@@ -744,7 +827,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     $('#f-feel', el).addEventListener('change', (e) => { d.feel = +e.target.value; saveDraft(); });
     $('#f-rest', el).addEventListener('change', (e) => { d.restSec = +e.target.value || 120; saveDraft(); });
     $('#f-notes', el).addEventListener('input', (e) => { d.notes = e.target.value; saveDraft(); });
-    $('#btn-timer', el).addEventListener('click', () => startTimer(d.restSec || 120));
+    if ($('#btn-timer', el)) $('#btn-timer', el).addEventListener('click', () => startTimer(d.restSec || 120));
     $('#btn-cancel', el).addEventListener('click', () => { if (confirm('Отменить и не сохранять?')) { draft = null; saveDraft(); render(); } });
     $('#btn-save', el).addEventListener('click', saveSession);
   }
@@ -792,7 +875,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   function saveSession() {
     const d = draft;
     const filled = d.exercises.some((e) => e.sets.some((st) => st.v != null && st.v !== ''));
-    if (!filled) { toast('Внесите хотя бы один подход'); return; }
+    if (!filled && d.type !== 'rest') { toast('Внесите хотя бы один подход'); return; }
     const session = {
       id: d.id, date: d.date || todayStr(), week: d.week, type: d.type, title: d.title, program: !!d.program,
       notes: d.notes || '', feel: d.feel || 3, createdAt: d.createdAt || Date.now(),
@@ -804,10 +887,9 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     const idx = state.sessions.findIndex((s) => s.id === session.id);
     if (idx >= 0) state.sessions[idx] = session; else state.sessions.push(session);
 
-    let msg = 'Тренировка сохранена';
-    if (!d.editing && d.program && d.week === state.cursor.week && d.cursorDay === state.cursor.day) {
-      advanceCursor();
-      msg += ' · следующая: ' + programDays(state.cursor.week)[state.cursor.day].title;
+    let msg = d.type === 'rest' ? 'Отдых отмечен' : 'Тренировка сохранена';
+    if (!d.editing && d.program && d.week === state.cursor.week && weekComplete()) {
+      msg += ' · неделя ' + state.cursor.week + ' выполнена полностью';
     }
     // Автоподстройка веса гантели: сделали 3×12 — предлагаем +2 кг
     const row = session.exercises.find((e) => e.key === 'row');
@@ -826,15 +908,10 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   // --- Дневник ---
   function renderDiary() {
     const list = sortedSessions().reverse();
-    const head = card(`<div class="card-head"><h1>Дневник</h1><span class="pill pill-muted">${list.length} ${plural(list.length, 'тренировка', 'тренировки', 'тренировок')}</span></div>
-      <div class="btn-row"><button class="btn btn-ghost btn-sm" id="btn-add-any" type="button">+ Записать другую тренировку</button></div>`);
-    $('#btn-add-any', head).addEventListener('click', () => {
-      const days = planForWeek(state.cursor.week).days;
-      const choice = prompt('Какая тренировка? Введите номер:\n' + days.map((d, i) => `${i + 1} — ${d.title}`).join('\n'), '1');
-      const i = parseInt(choice, 10) - 1;
-      if (isNaN(i) || !days[i]) return;
-      draft = newDraftFromDay(state.cursor.week, days[i], false); draft.cursorDay = -1; saveDraft(); currentTab = 'today'; render();
-    });
+    const nWork = list.filter(isWorkout).length;
+    const head = card(`<div class="card-head"><h1>Дневник</h1><span class="pill pill-muted">${nWork} ${plural(nWork, 'тренировка', 'тренировки', 'тренировок')}</span></div>
+      <div class="btn-row"><button class="btn btn-ghost btn-sm" id="btn-add-rest" type="button">☾ Отметить отдых задним числом</button></div>`);
+    $('#btn-add-rest', head).addEventListener('click', () => { draft = newRestDraft(addDays(todayStr(), -1)); saveDraft(); currentTab = 'today'; render(); });
     if (!list.length) { card('<div class="empty">Пока пусто. Первая тренировка появится здесь после сохранения.</div>'); return; }
 
     let html = '';
@@ -843,8 +920,8 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       const month = parseDate(s.date).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
       if (month !== lastMonth) { html += `<div class="date-group">${esc(month)}</div>`; lastMonth = month; }
       const ev = evaluate(s);
-      const badge = s.type === 'light' ? '' : ev.total ? (ev.ok ? '<span class="pill pill-good">выполнено</span>' : ev.fail ? '<span class="pill pill-warn">с запасом</span>' : '<span class="pill pill-muted">частично</span>') : '';
-      html += `<div class="session" data-id="${s.id}">
+      const badge = s.type === 'rest' ? '<span class="pill pill-good">отдых</span>' : s.type === 'light' ? '' : ev.total ? (ev.ok ? '<span class="pill pill-good">выполнено</span>' : ev.fail ? '<span class="pill pill-warn">с запасом</span>' : '<span class="pill pill-muted">частично</span>') : '';
+      html += `<div class="session${s.type === 'rest' ? ' rest' : ''}" data-id="${s.id}">
         <div class="session-head"><div><div class="session-title">${esc(s.title)}</div><div class="session-meta">${esc(fmtDate(s.date))} · неделя ${s.week || '–'}${sessionReps(s) ? ' · ' + sessionReps(s) + ' повт.' : ''}</div></div>${badge}</div>
         <div class="session-body hidden">${sessionTableHtml(s)}${s.notes ? `<p class="small" style="margin-top:6px">${esc(s.notes)}</p>` : ''}
           <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" data-edit="${s.id}" type="button">Изменить</button><button class="btn btn-ghost btn-sm" data-delete="${s.id}" type="button">Удалить</button></div>
@@ -853,22 +930,25 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     const el = card(html);
     $$('.session-head', el).forEach((h) => h.addEventListener('click', () => h.nextElementSibling.classList.toggle('hidden')));
     $$('[data-edit]', el).forEach((b) => b.addEventListener('click', () => { const s = state.sessions.find((x) => x.id === b.dataset.edit); draft = draftFromSession(s); saveDraft(); currentTab = 'today'; render(); }));
-    $$('[data-delete]', el).forEach((b) => b.addEventListener('click', () => { if (confirm('Удалить эту тренировку?')) { state.sessions = state.sessions.filter((x) => x.id !== b.dataset.delete); save(); render(); toast('Удалено'); } }));
+    $$('[data-delete]', el).forEach((b) => b.addEventListener('click', () => { if (confirm('Удалить эту запись?')) { state.sessions = state.sessions.filter((x) => x.id !== b.dataset.delete); save(); render(); toast('Удалено'); } }));
   }
 
   function sessionTableHtml(s) {
     const feel = ['', 'очень тяжело', 'тяжело', 'нормально', 'хорошо', 'отлично'][s.feel || 0];
+    if (!s.exercises.length) return `<div class="session-body"><div class="small">${s.type === 'rest' ? 'Отдых без тренировки.' : 'Без подходов.'}${feel ? ' Самочувствие: ' + feel + '.' : ''}</div></div>`;
     return `<div class="session-body"><table>${s.exercises.map((e) => {
       const ex = EX[e.key] || { name: e.key, unit: 'reps' };
-      const sets = e.sets.map((st) => `${st.v}${ex.unit === 'sec' ? ' с' : ''}${st.w ? '<span class="muted">' + fmtKg(st.w).replace('+', '+') + '</span>' : ''}`).join(' · ');
+      const sets = e.sets.map((st) => `${st.v}${ex.unit === 'sec' ? ' с' : ''}${st.w ? '<span class="muted">' + (e.key === 'row' ? '/' + st.w + ' кг' : fmtKg(st.w)) + '</span>' : ''}`).join(' · ');
       return `<tr><td>${esc(ex.name)}${e.tempo ? ` <span class="muted">${e.tempo} с</span>` : ''}</td><td>${sets}</td></tr>`;
     }).join('')}</table>${feel ? `<div class="small" style="margin-top:4px">Самочувствие: ${feel}</div>` : ''}</div>`;
   }
 
   // --- Прогресс ---
   function renderProgress() {
-    const list = sortedSessions();
-    if (!list.length) { card('<h1>Прогресс</h1><div class="empty">Графики появятся после первых тренировок.</div>'); return; }
+    const all = sortedSessions();
+    const list = all.filter(isWorkout);
+    const restDays = all.length - list.length;
+    if (!all.length) { card('<h1>Прогресс</h1><div class="empty">Графики появятся после первых тренировок.</div>'); return; }
 
     const totalReps = list.reduce((a, s) => a + sessionReps(s), 0);
     const bestBW = Math.max(0, ...list.map((s) => Math.max(bestSet(s, 'pullup', true), bestSet(s, 'maxtest', true))));
@@ -880,7 +960,7 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     const byWeek = new Map();
     list.forEach((s) => { const k = mondayOf(s.date); byWeek.set(k, (byWeek.get(k) || 0) + sessionReps(s)); });
     const weekKeys = [];
-    if (byWeek.size) { let k = mondayOf(list[0].date); const end = mondayOf(todayStr()); while (k <= end && weekKeys.length < 60) { weekKeys.push(k); k = addDays(k, 7); } }
+    if (list.length) { let k = mondayOf(list[0].date); const end = mondayOf(todayStr()); while (k <= end && weekKeys.length < 60) { weekKeys.push(k); k = addDays(k, 7); } }
     const weekly = weekKeys.map((k) => ({ date: k, v: byWeek.get(k) || 0 }));
     const thisWeek = weekly[weekly.length - 1] ? weekly[weekly.length - 1].v : 0;
     const prevWeek = weekly[weekly.length - 2] ? weekly[weekly.length - 2].v : null;
@@ -894,12 +974,18 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 
     const tiles = document.createElement('div'); tiles.className = 'tiles';
     tiles.innerHTML = `
-      <div class="tile"><div class="label">Тренировок</div><div class="value">${list.length}</div><div class="delta">неделя ${state.cursor.week} программы</div></div>
+      <div class="tile"><div class="label">Тренировок</div><div class="value">${list.length}</div><div class="delta">отдых ${restDays} ${plural(restDays, 'день', 'дня', 'дней')} · неделя ${state.cursor.week}</div></div>
       <div class="tile"><div class="label">Подтягиваний всего</div><div class="value">${totalReps}</div><div class="delta">за эту неделю ${thisWeek}</div>${delta}</div>
       <div class="tile"><div class="label">Лучший подход</div><div class="value">${bestBW}</div><div class="delta">своим весом</div></div>
       <div class="tile"><div class="label">Недель подряд</div><div class="value">${streak}</div><div class="delta">с 3+ тренировками</div></div>`;
     view.appendChild(tiles);
 
+    const startMon = mondayOf(state.createdAt || todayStr());
+    const nWeeks = Math.min(16, Math.max(4, Math.round((parseDate(mondayOf(todayStr())) - parseDate(startMon)) / 604800000) + 1));
+    const calCard = card(`<div class="card-head"><div><h2>Календарь</h2><div class="small">Тренировки, дни отдыха и пропуски за последние ${nWeeks} ${plural(nWeeks, 'неделю', 'недели', 'недель')}</div></div></div>${calendarHtml(nWeeks, true)}`);
+    bindCalendarTips(calCard);
+
+    if (!list.length) { card('<div class="empty">Графики появятся после первой тренировки.</div>'); return; }
     chartCard('Подтягиваний за неделю', 'Сумма повторений во всех хватах, по календарным неделям', weekly, 'bar', (p) => `${fmtShort(p.date)}: ${p.v} повт.`, 'повт.');
 
     const bwSets = list.filter((s) => s.type === 'volume' || s.type === 'variety').map((s) => ({ date: s.date, v: Math.max(bestSet(s, 'pullup', true), bestSet(s, 'chin', true), bestSet(s, 'neutral', true)) })).filter((p) => p.v > 0);
@@ -981,7 +1067,6 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   function fmtTick(t) { return Number.isInteger(t) ? String(t) : t.toFixed(1).replace('.', ','); }
 
   // --- План ---
-  let planWeek = null;
   function renderPlan() {
     if (planWeek == null) planWeek = state.cursor.week;
     const plan = planForWeek(planWeek);
@@ -1037,16 +1122,15 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
       </div>
       <div class="field-row">
         <div class="field"><label for="s-week">Текущая неделя</label><input id="s-week" type="number" min="1" step="1" value="${state.cursor.week}"></div>
-        <div class="field"><label for="s-day">Следующая тренировка</label><select id="s-day">${programDays(state.cursor.week).map((d, i) => `<option value="${i}"${i === state.cursor.day ? ' selected' : ''}>${esc(d.title)}</option>`).join('')}</select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" type="button" id="btn-repeat">Начать неделю заново</button></div>
       </div>
-      <div class="btn-row" style="margin-top:12px"><button class="btn btn-ghost btn-sm" type="button" id="btn-repeat">Повторить текущую неделю</button></div>`);
-    $$('#seg-days button', el).forEach((b) => b.addEventListener('click', () => { s.daysPerWeek = +b.dataset.v; clampCursor(); save(); render(); }));
+      <small>Смена недели обнуляет отметки «сделано» на экране «Сегодня»; записи в дневнике остаются.</small>`);
+    $$('#seg-days button', el).forEach((b) => b.addEventListener('click', () => { s.daysPerWeek = +b.dataset.v; save(); render(); }));
     $$('#seg-mode button', el).forEach((b) => b.addEventListener('click', () => { s.strengthMode = b.dataset.v; save(); render(); }));
     $('#s-row', el).addEventListener('change', (e) => { s.rowWeight = +e.target.value || 0; save(); });
     $('#s-bw', el).addEventListener('change', (e) => { s.bodyweight = +e.target.value || null; save(); });
-    $('#s-week', el).addEventListener('change', (e) => { state.cursor.week = Math.max(1, parseInt(e.target.value, 10) || 1); state.cursor.day = 0; planWeek = null; save(); render(); });
-    $('#s-day', el).addEventListener('change', (e) => { state.cursor.day = +e.target.value; save(); });
-    $('#btn-repeat', el).addEventListener('click', () => { state.cursor.day = 0; save(); render(); toast('Неделя ' + state.cursor.week + ' начнётся заново'); });
+    $('#s-week', el).addEventListener('change', (e) => { startWeek(parseInt(e.target.value, 10) || 1); save(); render(); });
+    $('#btn-repeat', el).addEventListener('click', () => { if (confirm('Начать неделю ' + state.cursor.week + ' заново? Отметки «сделано» сбросятся.')) { startWeek(state.cursor.week); save(); render(); toast('Неделя ' + state.cursor.week + ' начата заново'); } });
 
     const ex = card(`<h1>Сохранение и перенос</h1>
       <p class="small">Данные хранятся только в этом браузере. Чтобы перенести на другой телефон или не потерять при очистке браузера — сохраните файл и импортируйте его там.</p>
@@ -1159,9 +1243,6 @@ details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
     navigator.serviceWorker.register('sw.js').then((reg) => { swState = 'включён'; updateSwStatus(); reg.addEventListener('updatefound', () => { const nw = reg.installing; nw && nw.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) toast('Доступна новая версия — перезагрузите страницу'); }); }); })
       .catch(() => { swState = 'не удалось включить'; updateSwStatus(); });
   } else if (location.protocol === 'file:') { swState = 'файл открыт локально, всё уже оффлайн'; }
-
-  // Сохранение при уходе со страницы (на случай, если браузер выгрузит вкладку)
-  window.addEventListener('pagehide', () => { save(); saveDraft(); });
 
   applyTheme();
   render();

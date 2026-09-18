@@ -272,3 +272,30 @@ textarea.export { width: 100%; min-height: 110px; font-family: ui-monospace, Men
 .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .hidden { display: none !important; }
+
+/* Календарь: тренировки, отдых, пропуски */
+.cal { display: grid; gap: 4px; margin-top: 6px; }
+.cal-row { display: grid; grid-template-columns: 34px repeat(7, 1fr); gap: 4px; align-items: center; }
+.cal-head span { font-size: 11px; color: var(--muted); text-align: center; }
+.cal-month { font-size: 11px; color: var(--muted); }
+.cal-day {
+  display: flex; align-items: center; justify-content: center; aspect-ratio: 1; max-height: 40px;
+  border-radius: 8px; font-size: 12px; font-variant-numeric: tabular-nums; cursor: default;
+  background: var(--surface-2); color: var(--ink-2); border: 1px solid transparent;
+}
+.cal-day.workout { background: var(--series-1); color: #fff; font-weight: 600; }
+.cal-day.rest { background: var(--good); color: #fff; font-weight: 600; }
+.cal-day.missed { background: color-mix(in srgb, var(--serious) 38%, var(--surface)); color: var(--ink); }
+.cal-day.future { background: transparent; border-color: var(--grid); color: var(--muted); }
+.cal-day.before { background: transparent; color: var(--muted); opacity: 0.5; }
+.cal-day.today { box-shadow: 0 0 0 2px var(--ink); }
+.legend .sw.workout { background: var(--series-1); }
+.legend .sw.rest { background: var(--good); }
+.legend .sw.missed { background: color-mix(in srgb, var(--serious) 38%, var(--surface)); border: 1px solid var(--serious); }
+.legend .sw.future { background: transparent; border: 1px solid var(--axis); }
+.day-status { display: flex; align-items: center; gap: 8px; flex: none; }
+.day-status .chev { color: var(--muted); }
+.day-hint { display: block; font-size: 12px; margin-top: 4px; color: var(--ink-2); }
+.day-hint.warn { color: var(--serious); }
+.day-item.done { opacity: 1; background: color-mix(in srgb, var(--good) 12%, var(--surface-2)); }
+.session.rest .session-title { color: var(--good-text); }
